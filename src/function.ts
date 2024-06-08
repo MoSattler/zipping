@@ -2,55 +2,52 @@ import archiver from "archiver";
 import csvParser from "csv-parser";
 import { PassThrough, Readable } from "stream";
 
-async function parseCSV<Row>(buffer: Buffer) {
-  const results: Row[] = [];
+function parseCSV<Row>(inputStream: Readable) {
+  const outputStream = new PassThrough();
 
-  return new Promise<Row[]>((resolve, reject) => {
-    Readable.from(buffer)
-      .pipe(csvParser())
-      .on("data", (data: Row) => results.push(data))
-      .on("end", () => resolve(results))
-      .on("error", (error) => reject(error));
-  });
+  inputStream
+    .pipe(csvParser())
+    .on("data", (data: Row) => {
+      outputStream.write(JSON.stringify(data) + "\n");
+    })
+    .on("end", () => {
+      outputStream.end();
+    })
+    .on("error", (error) => {
+      outputStream.destroy(error);
+    });
+
+  return outputStream;
 }
 
-export async function createZip<T>(jsonData: T[]): Promise<Buffer> {
-  return new Promise((resolve) => {
-    const archive = archiver("zip", {
-      zlib: { level: 9 },
-    });
+function createZipFromStream(inputStream: Readable): Readable {
+  const outputStream = new PassThrough();
+  const archive = archiver("zip", {
+    zlib: { level: 9 },
+  });
 
-    const bufferStream = new PassThrough();
-    const chunks: Buffer[] = [];
+  archive.pipe(outputStream);
 
-    bufferStream.on("data", (chunk) => {
-      chunks.push(chunk);
-    });
+  let index = 0;
+  inputStream.on("data", (data) => {
+    archive.append(data, { name: `row${++index}.json` });
+  });
 
-    archive.on("error", (err) => {
-      throw err;
-    });
-
-    bufferStream.on("end", () => {
-      resolve(Buffer.concat(chunks));
-    });
-
-    archive.pipe(bufferStream);
-
-    jsonData.forEach((row, index) => {
-      archive.append(JSON.stringify(row, null, 2), {
-        name: `row${index + 1}.json`,
-      });
-    });
-
+  inputStream.on("end", () => {
     archive.finalize();
   });
+
+  inputStream.on("error", (error) => {
+    outputStream.destroy(error);
+  });
+
+  return outputStream;
 }
 
-const apiEndpoint = async (csv: Buffer) => {
-  const parsedCSV = await parseCSV(csv);
-  const zip = await createZip(parsedCSV);
-  return zip;
+const apiEndpoint = (csvStream: Readable) => {
+  const parsedStream = parseCSV(csvStream);
+  const zipStream = createZipFromStream(parsedStream);
+  return zipStream;
 };
 
 export default apiEndpoint;

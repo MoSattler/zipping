@@ -1,30 +1,39 @@
 import fs from "fs";
 import path from "path";
 import apiEndpoint from "./function";
+import { Readable } from "stream";
 
 const PATH_EXAMPLE_CSV = "../example.csv";
 const ZIP_OUTPUT_PATH = "../output.zip";
 
-async function readCSV(filePath: string) {
-  return fs.promises.readFile(filePath);
+function readCSV(filePath: string): fs.ReadStream {
+  return fs.createReadStream(filePath);
 }
 
-async function writeZip(file: Buffer, filePath: string) {
-  try {
-    await fs.promises.writeFile(filePath, file);
-    console.log("File written successfully");
-  } catch (err) {
-    console.error("Error writing file:", err);
-  }
+async function writeZip(outputStream: Readable, outputPath: string) {
+  return new Promise((resolve, reject) => {
+    const writeStream = fs.createWriteStream(outputPath);
+    outputStream.pipe(writeStream);
+
+    writeStream.on("finish", () => {
+      console.log("File written successfully");
+      resolve(null);
+    });
+
+    writeStream.on("error", (err) => {
+      console.error("Error writing file:", err);
+      reject(err);
+    });
+  });
 }
 
 const main = async () => {
-  const zipFilePath = "output.zip"; // The path where the zip file will be saved
+  const zipFilePath = path.join(__dirname, ZIP_OUTPUT_PATH);
 
   try {
-    const jsonData = await readCSV(path.join(__dirname, PATH_EXAMPLE_CSV));
-    const zip = await apiEndpoint(jsonData);
-    await writeZip(zip, path.join(__dirname, ZIP_OUTPUT_PATH))
+    const csvStream = readCSV(path.join(__dirname, PATH_EXAMPLE_CSV));
+    const zipStream = apiEndpoint(csvStream);
+    await writeZip(zipStream, zipFilePath);
     console.log(`Zip file has been created at ${zipFilePath}`);
   } catch (error) {
     console.error("Error:", error);
